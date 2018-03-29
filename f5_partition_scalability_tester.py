@@ -17,7 +17,6 @@ import getpass
 parser = argparse.ArgumentParser(description='A tool to parse web log files and add them to an ASM security policy')
 parser.add_argument('--bigip', '-b', help='IP or hostname of BIG-IP Management or Self IP', required=True)
 parser.add_argument('--user', '-u', help='username to use for authentication', required=True)
-parser.add_argument('--policyfullpath', '-p', help='ASM security policy path and name (e.g. /Common/policy1)')
 parser.add_argument('--policyprefix', help='Prefix for ASM policy name')
 parser.add_argument('--partitionprefix', help='Prefix for BIG-IP partition name')
 parser.add_argument('--language', '-l', help='Application Language', default='utf-8', choices=['utf-8','auto-detect'])
@@ -74,8 +73,8 @@ postHeaders.update(contentTypeJsonHeader)
 thirdOctet = 0
 fourthOctet = 1
 
-for instance in range(1, args.count):
-    if fourthOctet = 255:
+for instance in range(1, int(args.count) + 1):
+    if fourthOctet == 255:
         thirdOctet += 1
         fourthOctet = 1
     address = '10.0.%s.%s' % (thirdOctet, fourthOctet)
@@ -85,34 +84,36 @@ for instance in range(1, args.count):
     if newPartition.status_code != 200:
         print ('Problem Creating Partition; exiting...')
         quit()
-    virtualPayloadDict = {'fullPath': '%s%s/vs%s' % (args.partitionprefix, instance, count), 'destination': '/%s%s/%s:80' % (args.partitionprefix, count, address)}
+    virtualPayloadDict = {'name': 'vs%s' % (instance), 'partition': '%s%s' % (args.partitionprefix, instance), 'destination': '/%s%s/%s:80' % (args.partitionprefix, instance, address)}
+    virtualPayloadDict['profiles'] = []
+    virtualPayloadDict['profiles'].append({'name': 'tcp'})
+    virtualPayloadDict['profiles'].append({'name': 'http'})
     virtualPost = bip.post('%s/ltm/virtual' % (url_base), headers=postHeaders, data=json.dumps(virtualPayloadDict))
     if virtualPost.status_code != 200:
         print ('Problem Creating Virtual; exiting...')
         quit()
     else:
-        profilePayload = { 'fullPath': '/Common/http'}
-        profilePut = bip.put('%s/ltm/virtual/vs%s/profiles' % (url_base, count), headers=postHeaders, data=json.dumps(profilePayload))
-        if profilePut.status_code != 200:
-            print ('Problem Adding http profile to Virtual; exiting...')
-            quit()
-    policyPayloadDict = {'fullPath': '%s%s/%s%s' % (args.partitionprefix, count, args.policyprefix, count), 'caseInsensitive':args.caseinsensitive, 'enforcementMode':args.enforcement, 'applicationLanguage':args.language, 'protocolIndependent':args.protocolindependence}
+        print ('virtual post successful')
+    policyPayloadDict = {'name': '%s%s' % (args.policyprefix, instance), 'partition':'%s%s' % (args.partitionprefix, instance), 'caseInsensitive':args.caseinsensitive, 'enforcementMode':args.enforcement, 'applicationLanguage':args.language, 'protocolIndependent':args.protocolindependence}
     if args.template is not None:
         policyPayloadDict.update({'templateReference': policyTemplateId})
 
-    policyPayloadDict.update({'virtualServers' : '%s%s/vs%s' % (args.partitionprefix, count, count) })
+    policyPayloadDict.update({'virtualServers' : ['/%s%s/vs%s' % (args.partitionprefix, instance, instance)]})
 
-    newPolicyPayload = json.dumps(policyPayloadDict)
 
-    addPolicy = bip.post('%s/asm/policies/' % (url_base), headers=postHeaders, data = newPolicyPayload)
+    print('policyPayloadDict: %s' % (json.dumps(policyPayloadDict, indent=2)))
+
+    addPolicy = bip.post('%s/asm/policies/' % (url_base), headers=postHeaders, data = json.dumps(policyPayloadDict))
     if addPolicy.status_code == 201:
-        policyId = get_asm_policy_id_from_fullpath(args.policyfullpath)
-        print ('Successfully Created Policy: %s - policyId: %s' % (args.policyfullpath, policyId))
+        policyId = addPolicy.json()['id']
+        print('Policy ID: %s' % policyId)
+        #policyVirtualPayload = {'virtualServers' : ['vs%s' % (instance)]}
+        #policyVirtualUpdate = bip.patch('%s/asm/policies/%s' % (url_base, policyId), headers=postHeaders, data=json.dumps(policyVirtualPayload))
     else:
-        print ('Unsuccessful attempt to create policy: %s - Status Code: %s' % (args.policyfullpath, addPolicy.status_code))
+        print ('Unsuccessful attempt to create policy - Status Code: %s' % (addPolicy.status_code))
         print ('Body: %s' % (addPolicy.content))
 
     if args.learningmode is not None:
         policyBuilderPatchDict = {'learningMode': args.learningmode}
-        updateLearning = bip.patch('%s/asm/policies/%s/policy-builder' % (url_base, policyId), headers=postHeaders, data = json.dumps(policyBuilderPatchDict))
-        print ('Set Learning Mode to: %s on policy: %s' % (args.learningmode, args.policyfullpath))
+        #updateLearning = bip.patch('%s/asm/policies/%s/policy-builder' % (url_base, policyId), headers=postHeaders, data = json.dumps(policyBuilderPatchDict))
+        print ('Set Learning Mode to: %s on policy: %s%s' % (args.learningmode, args.policyprefix, instance))
